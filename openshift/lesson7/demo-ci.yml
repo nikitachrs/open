@@ -1,0 +1,192 @@
+## variables:
+##  VERSION_APP - export version from pom.xml file
+##  ENV_TO_DEPLOY - use for triggered pipeline in installer project for each env in manual mode
+##  BRANCH_INSTALLER_PROJECT - branch name in installer project
+##  PIPELINE_INSTALLER_URL - url for triggered pipeline in installer project
+##  PIPELINE_INSTALLER_TOKEN - access token for triggered pipeline in installer project. This variable is protected and saved in Settings -> CI/CD -> Variables.
+
+variables:
+  VERSION_APP: ""
+  ENV_TO_DEPLOY: ""
+  BRANCH_INSTALLER_PROJECT: "gig_installer_init"
+  PIPELINE_INSTALLER_URL: "http://gitlab.t-systems.ru/api/v4/projects/579/trigger/pipeline"
+
+before_script:
+
+## CI_JOB_ID is a number of job
+## We need to select last digit in CI_JOB_ID for choose db schema used.
+## We changed schema name for liquibase plugin and in spring profile
+## Schema name will looks like GIGABIT_BUILD_1
+## Changed generated unique number of database. Sum all digits in number and use last digit in sum.
+- >
+  while [ $CI_JOB_ID -gt 0 ]
+    do ((sum += CI_JOB_ID % 10))
+    ((CI_JOB_ID /= 10))
+    done && echo "Summ of digit $sum"
+- tags_number=$((sum % 10))
+- echo "Pipeline used GIGABIT_BUILD_$tags_number schema"
+- sed -i "s/GIGABIT_BUILD_/GIGABIT_BUILD_$tags_number/" pom.xml
+- sed -i "s/GIGABIT_BUILD_/GIGABIT_BUILD_$tags_number/" src/main/resources/application-build.properties
+
+- export PATH="${PATH}:${JAVA_HOME}/bin:${MAVEN_HOME}/bin"
+
+## Run ssh-agent (inside the build environment)
+- eval $(ssh-agent -s)
+
+## Add the SSH key stored in GITLAB_SSH_KEY variables to the agent store
+- echo "$GITLAB_SSH_KEY" | tr -d '\r' | ssh-add - > /dev/null
+
+## Create the SSH directory and set the right permissions
+- mkdir -p ~/.ssh
+- chmod 700 ~/.ssh
+
+## Add host keys stored SSH_KNOWN_HOSTS to the known_hosts file
+- echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+- chmod 644 ~/.ssh/known_hosts
+
+## For git commands
+- git config --global user.email "$GITLAB_EMAIL"
+- git config --global user.name "$GITLAB_USERNAME"
+
+## Export to variable VERSION_APP version from pom.xml. Use maven exec plugin.
+- export VERSION_APP=$(mvn -s settings.xml -q -Dexec.executable=echo -Dexec.args='${project.version}' --non-recursive exec:exec)
+- sed -i 's/PATH/home\/gitlab-runner/' settings.xml
+
+stages:
+- build
+- sonar
+- publish
+
+cache:
+  paths:
+  - .m2/repository
+
+#build project with profile build with tests
+build:
+  stage: build
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings.xml liquibase:dropAll liquibase:update -P build
+  - mvn -s settings.xml clean package -P build
+
+#send jacoco information to old sonar
+sonar:
+  stage: sonar
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings.xml liquibase:dropAll liquibase:update -P build
+  - mvn -s settings.xml clean org.jacoco:jacoco-maven-plugin:0.8.2:prepare-agent package org.sonarsource.scanner.maven:sonar-maven-plugin:3.3.0.603:sonar -P old-sonar -P build
+  only:
+  - develop
+
+#send jacoco information to sonarDevelop
+sonarDevelop:
+  stage: sonar
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings.xml liquibase:dropAll liquibase:update -P build
+  - mvn -s settings.xml clean
+  - mvn -s settings.xml org.jacoco:jacoco-maven-plugin:0.8.2:prepare-agent -P sonar-develop
+  - mvn -s settings.xml install spotbugs:spotbugs -P build,sonar-develop
+  - mvn -s settings.xml org.jacoco:jacoco-maven-plugin:0.8.2:report -P sonar-develop
+  - mvn -s settings.xml org.sonarsource.scanner.maven:sonar-maven-plugin:3.6.0.1398:sonar -P sonar-develop
+  only:
+  - develop
+
+#send jacoco information to sonarHotfix
+sonarHotfix:
+  stage: sonar
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings.xml liquibase:dropAll liquibase:update -P build
+  - mvn -s settings.xml clean
+  - mvn -s settings.xml org.jacoco:jacoco-maven-plugin:0.8.2:prepare-agent -P sonar-hotfix
+  - mvn -s settings.xml install spotbugs:spotbugs -P build,sonar-hotfix
+  - mvn -s settings.xml org.jacoco:jacoco-maven-plugin:0.8.2:report -P sonar-hotfix
+  - mvn -s settings.xml org.sonarsource.scanner.maven:sonar-maven-plugin:3.6.0.1398:sonar -P sonar-hotfix
+  only:
+  - /^hotfix-.*$/
+
+#create zip archive for devenv env and trigger the installer pipeline.
+publish:devenv:
+  stage: publish
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings.xml clean deploy -DskipTests=true -P archive,upload
+  - mvn -s settings.xml liquibase:dropAll -P oracledev
+  - curl -X POST -F token=$PIPELINE_INSTALLER_TOKEN -F "ref=$BRANCH_INSTALLER_PROJECT" -F "variables[VERSION_APP]=$VERSION_APP" -F "variables[ENV_TO_DEPLOY]=devenv" $PIPELINE_INSTALLER_URL
+
+#create zip archive for onthefly env and trigger the installer pipeline.
+publish:onthefly:
+  stage: publish
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings.xml clean deploy -DskipTests=true -P archive,upload
+  - mvn -s settings.xml liquibase:dropAll -P onthefly
+  - curl -X POST -F token=$PIPELINE_INSTALLER_TOKEN -F "ref=$BRANCH_INSTALLER_PROJECT" -F "variables[VERSION_APP]=$VERSION_APP" -F "variables[ENV_TO_DEPLOY]=onthefly" $PIPELINE_INSTALLER_URL
+  when: manual
+
+#create zip archive for onthefly2 env and trigger the installer pipeline.
+publish:onthefly2:
+  stage: publish
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings.xml clean deploy -DskipTests=true -P archive,upload
+  - mvn -s settings.xml liquibase:dropAll -P onthefly2
+  - curl -X POST -F token=$PIPELINE_INSTALLER_TOKEN -F "ref=$BRANCH_INSTALLER_PROJECT" -F "variables[VERSION_APP]=$VERSION_APP" -F "variables[ENV_TO_DEPLOY]=onthefly2" $PIPELINE_INSTALLER_URL
+  when: manual
+
+#create zip archive for systemtest env and trigger the installer pipeline.
+publish:systemtest:
+  stage: publish
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings.xml liquibase:dropAll -P systemtest
+  - curl -X POST -F token=$PIPELINE_INSTALLER_TOKEN -F "ref=$BRANCH_INSTALLER_PROJECT" -F "variables[VERSION_APP]=$CI_COMMIT_TAG" -F "variables[ENV_TO_DEPLOY]=systemtest" $PIPELINE_INSTALLER_URL
+  when: manual
+  only:
+  - tags
+
+#create zip archive for systemtest2 env and trigger the installer pipeline.
+publish:systemtest2:
+  stage: publish
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings.xml liquibase:dropAll -P systemtest2
+  - curl -X POST -F token=$PIPELINE_INSTALLER_TOKEN -F "ref=$BRANCH_INSTALLER_PROJECT" -F "variables[VERSION_APP]=$CI_COMMIT_TAG" -F "variables[ENV_TO_DEPLOY]=systemtest2" $PIPELINE_INSTALLER_URL
+  when: manual
+  only:
+  - tags
+
+#create release zip archive and trigger the installer pipeline.
+publish:release:
+  stage: publish
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings.xml versions:set -DnewVersion=$CI_COMMIT_TAG
+  - mvn -s settings.xml clean deploy -DskipTests=true -P archive,upload
+  - mvn -s settings.xml versions:set -DnewVersion=$CI_COMMIT_TAG-SNAPSHOT
+  ## Select id version number form Jira
+  - id_version_tag=$(curl --silent -u ${GITLAB_USERNAME}:${GITLAB_PASSWORD} -X GET "https://jira.devops.telekom.de/rest/api/2/project/EDB/versions" --insecure | jq "map(select(.[\"name\"] == \"Gigabit_$CI_COMMIT_TAG\")) | .[0] | .id" | sed -e 's/^"//'  -e 's/"$//')
+  ## Get releases notes from Jira to file releases_notes
+  - curl --silent -D- -u ${GITLAB_USERNAME}:${GITLAB_PASSWORD} -X GET --insecure "https://jira.devops.telekom.de/secure/ReleaseNote.jspa?projectId=12748&version=${id_version_tag}&styleName=Text"  | sed -n "/<textarea rows=\"40\" cols=\"120\">/,/<\/textarea>/p" | grep -v "textarea"  | sed '/^$/d' > releases_notes
+  ## Update tag info
+  - git remote set-url origin http://${GITLAB_USERNAME}:${GITLAB_PASSWORD}@gitlab.t-systems.ru/edb/Gigabit.git
+  - git tag $CI_COMMIT_TAG $CI_COMMIT_TAG^{} -f -F releases_notes
+  - git push http://${GITLAB_USERNAME}:${GITLAB_PASSWORD}@gitlab.t-systems.ru/edb/Gigabit.git $CI_COMMIT_TAG -f
+  - sed -i "s/GIGABIT_BUILD_$tags_number/GIGABIT_BUILD_/" pom.xml
+  - git add pom.xml
+  - git commit -m "New minor version $CI_COMMIT_TAG-SNAPSHOT to pom"
+  - git push http://${GITLAB_USERNAME}:${GITLAB_PASSWORD}@gitlab.t-systems.ru/edb/Gigabit.git HEAD:develop
+  only:
+  - tags

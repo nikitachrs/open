@@ -1,0 +1,25 @@
+###
+
+` HELM INIT CHART
+
+helm create demo-project
+
+` HELM EXPORT NAMESPACE IN OPENSHIFT
+
+set TILLER_NAMESPACE=edb-cources
+
+or in linux
+
+export TILLER_NAMESPACE=edb-cources
+
+` HELM INSTALL CHART TO OPENSHIFT
+
+helm install --name demo-test demo-project
+
+` HELM LIST OUR APPS IN OPENSHIFT IN OUR NAMESPACE
+
+helm list
+
+` HELM DELETE CONFIG FROM OPENSHIFT
+
+helm delete --purge demo-test

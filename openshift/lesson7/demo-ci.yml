@@ -69,6 +69,7 @@ build:
   script:
   - mvn -s settings.xml liquibase:dropAll liquibase:update -P build
   - mvn -s settings.xml clean package -P build
+  - helm upgrade $app-name
 
 #send jacoco information to old sonar
 sonar:

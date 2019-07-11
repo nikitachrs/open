@@ -1,0 +1,15 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  labels:
+    app: {{ include "test-ex-1.name" . }}
+  name: {{ include "test-ex-1.name" . }}
+spec:
+  host: {{ .Values.host.link }}
+  port:
+    targetPort: {{ .Values.service.portName }}
+  tls:
+    termination: edge
+  to:
+    kind: Service
+    name: {{ include "test-ex-1.name" . }}-dem

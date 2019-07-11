@@ -1,0 +1,39 @@
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  name: {{ include "test-ex-1.name" . }}-dem
+  labels:
+    app: {{ include "test-ex-1.name" . }}
+    chart: {{ include "test-ex-1.chart" . }}-dem
+    release: {{ include "test-ex-1.name" . }}
+    heritage: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "test-ex-1.name" . }}-dem
+        release: {{ include "test-ex-1.name" . }}-dem
+    spec:
+      containers:
+        - name: app-{{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: {{ .Values.app.portName }}
+              containerPort: {{ .Values.app.port }}
+              protocol: TCP
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+    {{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+    {{- end }}

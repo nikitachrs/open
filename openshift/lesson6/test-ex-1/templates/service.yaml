@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "test-ex-1.name" . }}-dem
+  labels:
+    app.kubernetes.io/name: {{ include "test-ex-1.name" . }}-dem
+    helm.sh/chart: {{ include "test-ex-1.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.app.portName }}
+      protocol: TCP
+      name: {{ .Values.service.portName }}
+  selector:
+    app: {{ include "test-ex-1.name" . }}-dem

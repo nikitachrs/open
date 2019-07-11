@@ -1,0 +1,135 @@
+variables:
+  VERSION_APP: ""
+  ENV_TO_DEPLOY: ""
+
+before_script:
+- export PATH="${PATH}:${JAVA_HOME}/bin:${MAVEN_HOME}/bin"
+
+## Run ssh-agent (inside the build environment)
+- eval $(ssh-agent -s)
+
+## Add the SSH key stored in GITLAB_SSH_KEY variables to the agent store
+- echo "$GITLAB_SSH_KEY" | tr -d '\r' | ssh-add - > /dev/null
+
+## Create the SSH directory and set the right permissions
+- mkdir -p ~/.ssh
+- chmod 700 ~/.ssh
+
+## Add host keys stored SSH_KNOWN_HOSTS to the known_hosts file
+- echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+- chmod 644 ~/.ssh/known_hosts
+
+- echo $GIT_USER_EMAIL
+- echo $GIT_USER_NAME
+
+## For git commands
+- git config --global user.email "$GIT_USER_EMAIL"
+- git config --global user.name "$GIT_USER_NAME"
+
+- ssh-keyscan 10.233.53.64 >> ~/.ssh/known_hosts
+
+## Http proxy for use slack notification
+- export http_proxy=proxy.t-systems.ru:3128
+- export https_proxy=proxy.t-systems.ru:3128
+
+stages:
+- build
+
+cache:
+  paths:
+  - .m2/repository
+
+#build and upload project with profile upload
+build:release:
+  stage: build
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings_edb.xml clean deploy -DVERSION_APP=$VERSION_APP -P upload
+  only:
+    variables:
+    - $ENV_TO_DEPLOY == "release"
+
+#build project for devenv env
+build:devenv:
+  stage: build
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings_edb.xml clean package -DVERSION_APP=$VERSION_APP
+  - scp target/*.jar gigabit@10.233.53.64:/home/gigabit/devTest
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/devTest && ./bin/shutdown.sh'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/devTest && java -Xmx2048m -Denvironment=RUS -Dserver=RUS_DEV -Dinstance=default -jar edb-gigabit-installer.jar auto.xml'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/devTest && cp web.xml webapps/gigabit/WEB-INF/'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/devTest && ./bin/startup.sh'
+  only:
+    variables:
+    - $ENV_TO_DEPLOY == "devenv"
+
+#build project for onthefly env
+build:onthefly:
+  stage: build
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings_edb.xml clean package -DVERSION_APP=$VERSION_APP
+  - scp target/*.jar gigabit@10.233.53.64:/home/gigabit/fly
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/fly && ./bin/shutdown.sh'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/fly && java -Xmx2048m -Denvironment=RUS -Dserver=RUS_TEST -Dinstance=onthefly -jar edb-gigabit-installer.jar auto.xml'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/fly && cp web.xml webapps/gigabit/WEB-INF/'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/fly && ./bin/startup.sh'
+  - 'curl -X POST --data-urlencode "payload={\"channel\": \"#cm_qa\", \"username\": \"webhookbot\", \"text\": \"Onthefly env is released for $VERSION_APP.\", \"icon_emoji\": \":ghost:\"}" https://hooks.slack.com/services/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'
+  only:
+    variables:
+    - $ENV_TO_DEPLOY == "onthefly"
+
+#build project for onthefly2 env
+build:onthefly2:
+  stage: build
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings_edb.xml clean package -DVERSION_APP=$VERSION_APP
+  - scp target/*.jar gigabit@10.233.53.64:/home/gigabit/fly2
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/fly2 && ./bin/shutdown.sh'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/fly2 && java -Xmx2048m -Denvironment=RUS -Dserver=RUS_TEST -Dinstance=onthefly2 -jar edb-gigabit-installer.jar auto.xml'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/fly2 && cp web.xml webapps/gigabit/WEB-INF/'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/fly2 && ./bin/startup.sh'
+  - 'curl -X POST --data-urlencode "payload={\"channel\": \"#cm_qa\", \"username\": \"webhookbot\", \"text\": \"Onthefly2 env is released for $VERSION_APP.\", \"icon_emoji\": \":ghost:\"}" https://hooks.slack.com/services/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'
+  only:
+    variables:
+    - $ENV_TO_DEPLOY == "onthefly2"
+
+#build project for systemtest env
+build:systemtest:
+  stage: build
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings_edb.xml clean package -DVERSION_APP=$VERSION_APP
+  - scp target/*.jar gigabit@10.233.53.64:/home/gigabit/systemtest
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/systemtest && ./bin/shutdown.sh'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/systemtest && java -Xmx2048m -Denvironment=RUS -Dserver=RUS_TEST -Dinstance=systemtest -jar edb-gigabit-installer.jar auto.xml'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/systemtest && cp web.xml webapps/gigabit/WEB-INF/'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/systemtest && ./bin/startup.sh'
+  - 'curl -X POST --data-urlencode "payload={\"channel\": \"#cm_qa\", \"username\": \"webhookbot\", \"text\": \"Systemtest env is released for $VERSION_APP.\", \"icon_emoji\": \":ghost:\"}" https://hooks.slack.com/services/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'
+  only:
+    variables:
+    - $ENV_TO_DEPLOY == "systemtest"
+
+#build project for systemtest2 env
+build:systemtest2:
+  stage: build
+  tags:
+  - edb-gigabit-docker
+  script:
+  - mvn -s settings_edb.xml clean package -DVERSION_APP=$VERSION_APP
+  - scp target/*.jar gigabit@10.233.53.64:/home/gigabit/systemtest2
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/systemtest2 && ./bin/shutdown.sh'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/systemtest2 && java -Xmx2048m -Denvironment=RUS -Dserver=RUS_TEST -Dinstance=systemtest2 -jar edb-gigabit-installer.jar auto.xml'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/systemtest2 && cp web.xml webapps/gigabit/WEB-INF/'
+  - ssh gigabit@10.233.53.64 'cd /home/gigabit/systemtest2 && ./bin/startup.sh'
+  - 'curl -X POST --data-urlencode "payload={\"channel\": \"#cm_qa\", \"username\": \"webhookbot\", \"text\": \"Systemtest2 env is released for $VERSION_APP.\", \"icon_emoji\": \":ghost:\"}" https://hooks.slack.com/services/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'
+  only:
+    variables:
+    - $ENV_TO_DEPLOY == "systemtest2"
